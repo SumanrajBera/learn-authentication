@@ -1,8 +1,10 @@
+import bcrypt from 'bcryptjs';
 import config from '../config/config.js';
 import userModel from '../models/users.model.js';
 import jwt from "jsonwebtoken"
 
 export async function registerController(req, res) {
+
     const { username, email, password } = req.body;
 
     const isAlreadyRegistered = await userModel.findOne({
@@ -13,7 +15,7 @@ export async function registerController(req, res) {
     })
 
     if (isAlreadyRegistered) {
-        return res.status(409).json({
+        res.status(409).json({
             message: "Username or email already exists"
         })
     }
@@ -24,6 +26,7 @@ export async function registerController(req, res) {
         password
     })
 
+
     res.status(201).json({
         message: "User registered successfully",
         user: {
@@ -32,12 +35,14 @@ export async function registerController(req, res) {
             verified: user.verified
         },
     })
+
+
 }
 
 export async function loginController(req, res) {
     const { email, password } = req.body;
 
-    const user = await userModel.findOne({ email }).select("+password")
+    const user = await userModel.findOne({ email })
 
     if (!user) {
         return res.status(401).json({
@@ -45,13 +50,14 @@ export async function loginController(req, res) {
         })
     }
 
-    if (!user.verified) {
-        return res.status(401).json({
-            message: "Email not verified"
-        })
-    }
+    //After Email verification implemented
+    // if (!user.verified) {
+    //     return res.status(401).json({
+    //         message: "Email not verified"
+    //     })
+    // }
 
-    const isPasswordValid = await user.comparePassword(password)
+    const isPasswordValid = user.comparePassword(password);
 
     if (!isPasswordValid) {
         return res.status(401).json({
@@ -67,8 +73,18 @@ export async function loginController(req, res) {
         }
     )
 
+    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+
+    const session = await sessionModel.create({
+        user: user._id,
+        refreshTokenHash,
+        ip: req.ip,
+        userAgent: req.headers["user-agent"]
+    })
+
     const accessToken = jwt.sign({
-        id: user._id
+        id: user._id,
+        sessionId: session._id
     }, config.JWT_SECRET,
         {
             expiresIn: "15m"
@@ -93,6 +109,7 @@ export async function loginController(req, res) {
 }
 
 export async function getMeController(req, res) {
+
     const token = req.headers.authorization?.split(" ")[1];
 
     if (!token) {
@@ -112,6 +129,7 @@ export async function getMeController(req, res) {
             email: user.email,
         }
     })
+
 }
 
 export async function refreshTokenController(req, res) {
@@ -124,6 +142,19 @@ export async function refreshTokenController(req, res) {
     }
 
     const decoded = jwt.verify(refreshToken, config.JWT_SECRET)
+
+    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+
+    const session = await sessionModel.findOne({
+        refreshTokenHash,
+        revoked: false
+    })
+
+    if (!session) {
+        return res.status(401).json({
+            message: "Invalid refresh token"
+        })
+    }
 
     const accessToken = jwt.sign({
         id: decoded.id
@@ -141,6 +172,11 @@ export async function refreshTokenController(req, res) {
         }
     )
 
+    const newRefreshTokenHash = await bcrypt.hash(newRefreshToken, 10);
+
+    session.refreshTokenHash = newRefreshTokenHash;
+    await session.save();
+
     res.cookie("refreshToken", newRefreshToken, {
         httpOnly: true,
         secure: true,
@@ -152,4 +188,65 @@ export async function refreshTokenController(req, res) {
         message: "Access token refreshed successfully",
         accessToken
     })
+}
+
+export async function logoutController(req, res) {
+
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!refreshToken) {
+        return res.status(400).json({
+            message: "Refresh token not found"
+        })
+    }
+
+    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+
+    const session = await sessionModel.findOne({
+        refreshTokenHash,
+        revoked: false
+    })
+
+    if (!session) {
+        return res.status(400).json({
+            message: "Invalid refresh token"
+        })
+    }
+
+    session.revoked = true;
+    await session.save();
+
+    res.clearCookie("refreshToken")
+
+    res.status(200).json({
+        message: "Logged out successfully"
+    })
+
+}
+
+export async function logoutAllController(req, res) {
+
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!refreshToken) {
+        return res.status(400).json({
+            message: "Refresh token not found"
+        })
+    }
+
+    const decoded = jwt.verify(refreshToken, config.JWT_SECRET)
+
+    await sessionModel.updateMany({
+        user: decoded.id,
+        revoked: false
+    }, {
+        revoked: true
+    })
+
+    res.clearCookie("refreshToken")
+
+    res.status(200).json({
+        message: "Logged out from all devices successfully"
+    })
+
 }

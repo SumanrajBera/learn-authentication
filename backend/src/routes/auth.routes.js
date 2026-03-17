@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getMeController, loginController, refreshTokenController, registerController } from "../controllers/auth.controller.js";
+import { getMeController, loginController, logoutAllController, logoutController, refreshTokenController, registerController } from "../controllers/auth.controller.js";
 
 const authRouter = Router()
 
@@ -22,5 +22,16 @@ authRouter.get("/get-me", getMeController)
  * GET /api/auth/refresh-token
  */
 authRouter.get("/refresh-token", refreshTokenController)
+
+/**
+ * GET /api/auth/logout
+ */
+authRouter.get("/logout", logoutController)
+
+
+/**
+ * GET /api/auth/logout-all
+ */
+authRouter.get("/logout-all", logoutAllController)
 
 export default authRouter
